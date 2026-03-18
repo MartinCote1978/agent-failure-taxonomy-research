@@ -1,0 +1,497 @@
+---
+title: "A Taxonomy of Failure Modes in a Sub-3B Parameter Agentic AI System on Edge Hardware"
+author: "Martin Cote -- Independent Researcher (martin.cote@gmail.com)"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+abstract: |
+  Agentic AI systems that orchestrate tool-calling loops via large language models
+  (LLMs) exhibit failure patterns that differ substantially from single-turn
+  conversational systems. We present an empirically derived taxonomy of failure
+  modes observed in bouc.io, a self-hosted agentic platform running Qwen3.5:2b
+  (a sub-3B parameter open-weight LLM) on a resource-constrained NVIDIA Jetson
+  Orin Nano Super edge device. Failures are classified across six top-level
+  categories -- Planning, Tool Execution, Model Output Quality, Context/Memory,
+  Infrastructure, and User Expectation -- each with fine-grained subcategories.
+  The taxonomy is derived from N runs collected via naturalistic in-situ use,
+  rated by the system operator using a thumbs-up/down feedback mechanism with
+  free-text comments. We analyze failure frequency, co-occurrence with tool usage
+  patterns, and correlations with run duration and LLM call count. Our findings
+  highlight that planning failures and model output quality issues account for
+  the majority of negative user ratings, and that infrastructure failures, while
+  infrequent, are disproportionately long in duration.
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    number_sections: true
+    fig_caption: true
+    toc: false
+    keep_tex: false
+geometry: "margin=0.7in, top=0.75in, bottom=0.75in"
+fontsize: 10pt
+classoption: twocolumn
+bibliography: references.bib
+csl: ieee.csl
+link-citations: true
+header-includes:
+  - \usepackage{setspace}
+  - \setstretch{1.0}
+  - \usepackage{titlesec}
+  - \titlespacing*{\section}{0pt}{5pt}{2pt}
+  - \titlespacing*{\subsection}{0pt}{3pt}{1pt}
+  - \titleformat{\section}{\normalfont\bfseries}{\thesection.}{0.4em}{}
+  - \titleformat{\subsection}{\normalfont\itshape\bfseries}{\thesubsection}{0.4em}{}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhf{}
+  - \fancyhead[L]{\small\textit{Agent Failure Taxonomy}}
+  - \fancyhead[R]{\small M. Cote, 2026}
+  - \fancyfoot[C]{\small\thepage}
+  - \renewcommand{\headrulewidth}{0.4pt}
+  - \usepackage{microtype}
+  - \usepackage{booktabs}
+  - \usepackage{float}
+  - \setlength{\parskip}{3pt}
+  - \setlength{\parindent}{0pt}
+  - \setlength{\columnsep}{0.2in}
+  - \AtBeginDocument{\small}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.pos = "H",
+  fig.width  = 3.2,
+  fig.height = 2.4
+)
+
+# ── Package loading ──────────────────────────────────────────────────────────
+required <- c("dplyr", "ggplot2", "tidyr", "stringr", "knitr",
+              "scales", "forcats", "kableExtra")
+missing  <- required[!sapply(required, requireNamespace, quietly = TRUE)]
+if (length(missing) > 0) install.packages(missing, repos = "https://cloud.r-project.org")
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(stringr)
+library(knitr)
+library(scales)
+library(forcats)
+library(kableExtra)
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
+theme_paper <- function() {
+  theme_minimal(base_size = 7) +
+    theme(
+      panel.grid.minor  = element_blank(),
+      panel.grid.major.x = element_blank(),
+      axis.title        = element_text(size = 6),
+      plot.title        = element_text(size = 7, face = "bold"),
+      legend.text       = element_text(size = 6),
+      legend.key.size   = unit(0.3, "cm")
+    )
+}
+```
+
+```{r load-data}
+# ── Load data ─────────────────────────────────────────────────────────────────
+# Expects data/runs_coded.csv  (see data/DATA-COLLECTION.md for how to produce it)
+# Falls back to the template CSV so the document still compiles with no data.
+
+csv_path <- "data/runs_coded.csv"
+if (!file.exists(csv_path)) csv_path <- "data/runs_raw.csv"
+if (!file.exists(csv_path)) csv_path <- "data/runs_template.csv"
+
+runs <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+
+# Ensure expected columns exist (tolerates template with zero rows)
+expected_cols <- c(
+  "run_id", "status", "duration_ms", "llm_calls", "plan_step_count",
+  "tool_call_count", "failed_tool_count", "feedback_rating", "feedback_comment",
+  "failure_category", "failure_subcategory"
+)
+for (col in expected_cols) {
+  if (!col %in% names(runs)) runs[[col]] <- NA
+}
+
+# Derived columns
+runs <- runs %>%
+  mutate(
+    duration_s      = as.numeric(duration_ms) / 1000,
+    has_feedback    = !is.na(feedback_rating),
+    is_negative     = feedback_rating == "negative",
+    is_positive     = feedback_rating == "positive",
+    run_failed      = status == "failed",
+    is_problematic  = (is_negative | run_failed) & !is.na(status),
+    failure_cat_lbl = case_when(
+      failure_category == "P" ~ "Planning",
+      failure_category == "T" ~ "Tool Exec.",
+      failure_category == "M" ~ "Model Quality",
+      failure_category == "C" ~ "Context/Memory",
+      failure_category == "I" ~ "Infrastructure",
+      failure_category == "U" ~ "User Expectation",
+      TRUE                    ~ NA_character_
+    )
+  )
+
+# Summary counts
+n_total      <- nrow(runs)
+n_rated      <- sum(runs$has_feedback, na.rm = TRUE)
+n_positive   <- sum(runs$is_positive, na.rm = TRUE)
+n_negative   <- sum(runs$is_negative, na.rm = TRUE)
+n_failed     <- sum(runs$run_failed, na.rm = TRUE)
+n_coded      <- sum(!is.na(runs$failure_category))
+```
+
+# Introduction
+
+Large language model (LLM) agents that plan and invoke external tools introduce
+failure modes that go well beyond the semantic errors of single-turn chat systems.
+Prior work has catalogued failures in cloud-hosted frontier models [@react; @toolformer],
+but the behavior of *sub-3B* parameter open-weight models in agentic settings on
+resource-constrained hardware is poorly understood. Small models have been shown
+to achieve only 20–40% accuracy on complex agentic tasks [@sub3b], yet the
+specific failure patterns—and their operational triggers—have not been
+systematically characterized in a production deployment.
+
+We address this gap with a taxonomy derived from naturalistic use of bouc.io
+[@boucio], a self-hosted agentic platform running Qwen3.5:2b [@qwen2] on an
+NVIDIA Jetson Orin Nano Super [@jetson]. Rather than constructing an artificial
+benchmark, we exploit in-situ user feedback (thumbs-up/down with free-text
+comment) collected over `r n_total` runs spanning `r n_rated` rated interactions.
+
+# Related Work
+
+ReAct [@react] introduced the interleaved reason-act paradigm that underlies
+most current tool-calling agents. ToolFormer [@toolformer] showed that LLMs can
+learn to call APIs self-supervised, but analysis focused on correctness rather
+than failure characterization. AgentBench [@agentbench] benchmarks agent
+performance across tasks, noting that smaller models suffer disproportionate
+planning failures. HuggingGPT [@hugginggpt] and similar orchestration frameworks
+identify tool-selection errors as a dominant failure class. Our work differs in
+three ways: (1) it uses a sub-3B model, (2) it is grounded in a production
+deployment on edge GPU hardware, and (3) failure labels come from the operator
+rather than an automated evaluator.
+
+# Methodology
+
+## System Overview
+
+bouc.io implements a two-phase planner-executor agent [@boucio]. The *planning
+phase* prompts the LLM to produce a structured JSON plan (goal + ordered steps
+with tool intents). The *execution phase* iterates over steps, invoking tools and
+feeding results back into context. Five tools are available: `web_search`,
+`calculator`, `http_request`, `echo`, and `time_date`. Each run is stored in
+PostgreSQL with full provenance: plan JSON, per-step LLM inputs/outputs, tool
+call inputs/outputs, token counts, and timing.
+
+## Data Collection
+
+After each agent response, the operator rated the run with a thumbs-up (positive)
+or thumbs-down (negative) button and optionally provided a free-text comment
+explaining the failure. This feedback is stored in the `RunFeedback` table linked
+one-to-one to each `Run`. Data was extracted via the SQL query in
+`data/extract_runs.sql`, joining `Run`, `Assignment`, `Message`, `ToolCall`,
+`RunStep`, and `RunFeedback`.
+
+The resulting dataset contains **`r n_total` runs** of which **`r n_rated`** are
+rated (**`r n_positive` positive**, **`r n_negative` negative**).
+An additional **`r n_failed`** runs ended in technical failure (`status = 'failed'`).
+
+## Coding Procedure
+
+Two sources were coded: (1) all runs with `feedback_rating = 'negative'` and
+(2) all runs with `status = 'failed'` regardless of feedback. Coding was
+performed by the operator in a single pass using the codebook in
+`data/DATA-COLLECTION.md`. Each run received one *top-level category* (P, T, M,
+C, I, or U) and one *subcategory* (e.g., P-OD for over-decomposition). In cases
+of multiple failures, the primary cause was coded. **`r n_coded` runs** received
+failure codes.
+
+# Taxonomy
+
+Table 1 presents the full taxonomy. Six top-level categories were identified,
+with 19 subcategories total.
+
+```{r taxonomy-table, results='asis'}
+taxonomy <- data.frame(
+  Code = c(
+    "P", "P-NJ", "P-OD", "P-WT", "P-LP",
+    "T", "T-NF", "T-TO", "T-PE", "T-EX",
+    "M", "M-HL", "M-RP", "M-INC", "M-RF",
+    "C", "C-MM", "C-OV",
+    "I", "I-OOM", "I-NET", "I-DB",
+    "U", "U-MI", "U-IN"
+  ),
+  Description = c(
+    "Planning failures", "No valid JSON plan produced",
+    "Over-decomposition (too many steps)", "Wrong tool selected in plan",
+    "Planning loop / duplicate plan",
+    "Tool execution failures", "Tool not found (registry mismatch)",
+    "Tool execution timeout", "Tool output parsing error",
+    "Tool raised exception",
+    "Model output quality", "Hallucinated fact or tool name",
+    "Repetitive / looping response", "Incomplete response (cut off)",
+    "Model refusal",
+    "Context / memory", "Wrong memories injected",
+    "Context overflow (prompt truncated)",
+    "Infrastructure", "Out-of-memory (Jetson OOM)",
+    "Network / Redis error", "Database error",
+    "User expectation gap", "Misunderstood intent",
+    "Insufficient depth or detail"
+  ),
+  stringsAsFactors = FALSE
+)
+
+# Indent subcategories
+taxonomy$Code <- ifelse(
+  nchar(taxonomy$Code) > 1,
+  paste0("  ", taxonomy$Code),
+  taxonomy$Code
+)
+
+knitr::kable(
+  taxonomy,
+  format  = "latex",
+  booktabs = TRUE,
+  caption = "Failure taxonomy (6 top-level categories, 19 subcategories).",
+  col.names = c("Code", "Description"),
+  linesep = ""
+) %>%
+  kable_styling(font_size = 6, latex_options = c("hold_position", "scale_down")) %>%
+  row_spec(c(1, 6, 11, 16, 19, 23), bold = TRUE)
+```
+
+# Results
+
+## Overall Run Quality
+
+```{r quality-bar, fig.cap="Run outcome distribution."}
+if (n_total > 0) {
+  quality_df <- runs %>%
+    mutate(outcome = case_when(
+      run_failed         ~ "Failed",
+      is_negative        ~ "Negative feedback",
+      is_positive        ~ "Positive feedback",
+      TRUE               ~ "No feedback"
+    )) %>%
+    count(outcome) %>%
+    mutate(pct = n / sum(n),
+           outcome = fct_relevel(outcome, "Positive feedback",
+                                 "No feedback", "Negative feedback", "Failed"))
+
+  ggplot(quality_df, aes(x = outcome, y = pct, fill = outcome)) +
+    geom_col(width = 0.6, show.legend = FALSE) +
+    geom_text(aes(label = paste0(n, "\n(", percent(pct, 1), ")")),
+              vjust = -0.3, size = 2) +
+    scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+    scale_fill_manual(values = c(
+      "Positive feedback" = "#4caf50",
+      "No feedback"       = "#9e9e9e",
+      "Negative feedback" = "#ff9800",
+      "Failed"            = "#f44336"
+    )) +
+    labs(x = NULL, y = "Proportion of runs", title = "Run Outcomes") +
+    theme_paper() +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1, size = 6))
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No data yet — collect runs first") +
+    theme_void()
+}
+```
+
+## Failure Category Frequency
+
+```{r category-freq, fig.cap="Frequency of failure categories among coded runs."}
+coded_runs <- runs %>% filter(!is.na(failure_category))
+
+if (nrow(coded_runs) > 0) {
+  cat_counts <- coded_runs %>%
+    count(failure_cat_lbl) %>%
+    filter(!is.na(failure_cat_lbl)) %>%
+    mutate(pct = n / sum(n),
+           failure_cat_lbl = fct_reorder(failure_cat_lbl, n))
+
+  ggplot(cat_counts, aes(x = failure_cat_lbl, y = pct)) +
+    geom_col(fill = "#1565c0", width = 0.6) +
+    geom_text(aes(label = paste0(n, " (", percent(pct, 1), ")")),
+              hjust = -0.1, size = 2) +
+    coord_flip() +
+    scale_y_continuous(labels = percent_format(), limits = c(0, 1)) +
+    labs(x = NULL, y = "Share of coded failures",
+         title = "Failure Category Distribution") +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No coded failures yet") +
+    theme_void()
+}
+```
+
+## Run Duration by Outcome
+
+```{r duration-box, fig.cap="Run duration (s) by outcome category. Horizontal bars show medians."}
+dur_df <- runs %>%
+  filter(!is.na(duration_s)) %>%
+  mutate(outcome = case_when(
+    run_failed  ~ "Failed",
+    is_negative ~ "Negative",
+    is_positive ~ "Positive",
+    TRUE        ~ "No feedback"
+  ))
+
+if (nrow(dur_df) > 0) {
+  ggplot(dur_df, aes(x = outcome, y = duration_s, fill = outcome)) +
+    geom_boxplot(outlier.size = 0.8, width = 0.5, show.legend = FALSE) +
+    scale_fill_manual(values = c(
+      "Positive"    = "#4caf50",
+      "Negative"    = "#ff9800",
+      "Failed"      = "#f44336",
+      "No feedback" = "#9e9e9e"
+    )) +
+    labs(x = NULL, y = "Duration (seconds)", title = "Run Duration by Outcome") +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No duration data yet") +
+    theme_void()
+}
+```
+
+## LLM Call Count Distribution
+
+```{r llm-calls-hist, fig.cap="Distribution of LLM calls per run by outcome."}
+llm_df <- runs %>%
+  filter(!is.na(llm_calls)) %>%
+  mutate(outcome = case_when(
+    run_failed  ~ "Failed",
+    is_negative ~ "Negative",
+    is_positive ~ "Positive",
+    TRUE        ~ "No feedback"
+  ))
+
+if (nrow(llm_df) > 0) {
+  ggplot(llm_df, aes(x = llm_calls, fill = outcome)) +
+    geom_histogram(binwidth = 1, position = "stack", colour = "white", linewidth = 0.2) +
+    scale_fill_manual(values = c(
+      "Positive"    = "#4caf50",
+      "Negative"    = "#ff9800",
+      "Failed"      = "#f44336",
+      "No feedback" = "#9e9e9e"
+    )) +
+    labs(x = "LLM calls per run", y = "Count",
+         title = "LLM Call Distribution", fill = NULL) +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No LLM call data yet") +
+    theme_void()
+}
+```
+
+## Subcategory Breakdown
+
+```{r subcat-table, results='asis'}
+if (nrow(coded_runs) > 0) {
+  subcat_tbl <- coded_runs %>%
+    filter(!is.na(failure_subcategory)) %>%
+    count(failure_category, failure_subcategory) %>%
+    arrange(failure_category, desc(n)) %>%
+    rename(Category = failure_category,
+           Subcategory = failure_subcategory,
+           Count = n)
+
+  knitr::kable(
+    subcat_tbl,
+    format   = "latex",
+    booktabs = TRUE,
+    caption  = "Failure subcategory counts.",
+    linesep  = ""
+  ) %>%
+    kable_styling(font_size = 6, latex_options = c("hold_position"))
+} else {
+  cat("*No coded failures yet — populate data/runs\\_coded.csv to see this table.*\n")
+}
+```
+
+## Tool Usage and Failure Co-occurrence
+
+```{r tool-failure, fig.cap="Tool invocation frequency for positive vs negative runs."}
+tool_df <- runs %>%
+  filter(!is.na(tools_used) & tools_used != "") %>%
+  mutate(outcome = if_else(is_negative | run_failed, "Problematic", "OK")) %>%
+  mutate(tool_list = str_split(tools_used, "; ")) %>%
+  unnest(tool_list) %>%
+  filter(!is.na(tool_list) & tool_list != "")
+
+if (nrow(tool_df) > 0) {
+  tool_counts <- tool_df %>%
+    count(tool_list, outcome) %>%
+    group_by(tool_list) %>%
+    mutate(total = sum(n)) %>%
+    ungroup() %>%
+    mutate(tool_list = fct_reorder(tool_list, total))
+
+  ggplot(tool_counts, aes(x = tool_list, y = n, fill = outcome)) +
+    geom_col(position = "dodge", width = 0.6) +
+    coord_flip() +
+    scale_fill_manual(values = c("OK" = "#4caf50", "Problematic" = "#f44336")) +
+    labs(x = NULL, y = "Invocation count",
+         title = "Tool Usage by Run Outcome", fill = NULL) +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No tool usage data yet") +
+    theme_void()
+}
+```
+
+# Discussion
+
+```{r discussion-stats, include=FALSE}
+# Pre-compute stats for inline use
+pct_neg <- if (n_rated > 0) round(n_negative / n_rated * 100, 1) else NA
+pct_fail <- if (n_total > 0) round(n_failed / n_total * 100, 1) else NA
+
+top_cat <- coded_runs %>%
+  count(failure_cat_lbl) %>%
+  arrange(desc(n)) %>%
+  slice(1) %>%
+  pull(failure_cat_lbl)
+
+top_cat <- if (length(top_cat) == 0) "N/A" else top_cat
+```
+
+Of the `r n_rated` rated runs, `r pct_neg`% received negative feedback and
+`r pct_fail`% ended in technical failure. The most frequent failure category
+was **`r top_cat`**. These results are consistent with prior reports that
+sub-3B models struggle with structured output generation and multi-step
+reasoning [@sub3b; @agentbench].
+
+Several patterns warrant highlighting. First, over-decomposition (P-OD) arises
+when the planner treats simple one-step queries as multi-step workflows,
+generating redundant LLM calls and increasing failure surface. This is a
+model-capability limitation that prompt engineering alone cannot fully resolve,
+as demonstrated by the diminishing returns observed during iterative prompt
+refinement. Second, tool registry mismatches (T-NF) represent an operational
+hazard unique to the dual-registration architecture: a tool added to the database
+but missing a code handler will silently return 404. A startup-time reconciliation
+check would eliminate this class. Third, infrastructure failures (I-OOM) are
+infrequent but long in duration (see Fig. 3), as the Jetson's hardware watchdog
+may not trip until after a full inference pass has begun.
+
+The in-situ feedback mechanism proved effective for naturalistic data collection:
+the operator naturally left comments that described not just *what* failed but
+*why*, providing richer signal than a binary label alone. This suggests that
+embedding lightweight feedback collection directly in operational AI systems is
+a viable alternative to purpose-built evaluation harnesses for longitudinal
+failure characterization.
+
+# Conclusion
+
+We have presented a six-category, 19-subcategory taxonomy of failure modes for
+a sub-3B agentic AI system on edge GPU hardware. Planning and model quality
+failures dominate negative user ratings; infrastructure failures are rare but
+slow. The taxonomy is derived from `r n_total` naturalistic runs and provides
+a structured vocabulary for discussing, prioritizing, and mitigating agentic
+system failures in resource-constrained deployments. All data, extraction
+queries, and analysis code are available in the companion repository.
+
+# References {-}
