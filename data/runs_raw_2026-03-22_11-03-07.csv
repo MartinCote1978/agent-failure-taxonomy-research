@@ -1,0 +1,1 @@
+run_id,assignment_id,assignment_title,created_at,status,error,duration_ms,prompt_tokens,completion_tokens,total_tokens,llm_calls,plan_goal,plan_step_count,user_message,tool_call_count,tools_used,failed_tool_count,step_count,feedback_rating,feedback_comment,failure_category,failure_subcategory,coder_notes

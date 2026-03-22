@@ -19,6 +19,7 @@ SELECT
   r.created_at,
   r.status,
   r.error,
+  r.model_name,
 
   -- Duration in milliseconds
   CASE

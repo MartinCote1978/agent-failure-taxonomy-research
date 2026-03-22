@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.18)  22 MAR 2026 10:55
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.18)  22 MAR 2026 11:59
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -695,40 +695,53 @@ LaTeX Warning: `!h' float specifier changed to `!ht'.
 <agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf, id=53, 230.8625pt x 172.645pt>
 File: agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf Graphic file (type pdf)
 <use agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf>
-Package pdftex.def Info: agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf  used on input line 395.
+Package pdftex.def Info: agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf  used on input line 397.
 (pdftex.def)             Requested size: 230.86192pt x 172.64456pt.
 
 Underfull \vbox (badness 10000) has occurred while \output is active []
 
 [2{/Users/martincote/Library/TinyTeX/texmf-dist/fonts/enc/dvips/lm/lm-rm.enc}{/Users/martincote/Library/TinyTeX/texmf-dist/fonts/enc/dvips/lm/lm-mathit.enc}{/Users/martincote/Library/TinyTeX/texmf-dist/fonts/enc/dvips/lm/lm-mathsy.enc} <./agent-failure-taxonomy_files/figure-latex/quality-bar-1.pdf> <./agent-failure-taxonomy_files/figure-latex/category-freq-1.pdf> <./agent-failure-taxonomy_files/figure-latex/duration-box-1.pdf> <./agent-failure-taxonomy_files/figure-latex/llm-calls-hist-1.pdf>]
-Underfull \hbox (badness 6316) in paragraph at lines 408--421
+<agent-failure-taxonomy_files/figure-latex/model-outcome-1.pdf, id=96, 230.8625pt x 172.645pt>
+File: agent-failure-taxonomy_files/figure-latex/model-outcome-1.pdf Graphic file (type pdf)
+<use agent-failure-taxonomy_files/figure-latex/model-outcome-1.pdf>
+Package pdftex.def Info: agent-failure-taxonomy_files/figure-latex/model-outcome-1.pdf  used on input line 405.
+(pdftex.def)             Requested size: 230.86192pt x 172.64456pt.
+<agent-failure-taxonomy_files/figure-latex/model-failure-cat-1.pdf, id=97, 230.8625pt x 172.645pt>
+File: agent-failure-taxonomy_files/figure-latex/model-failure-cat-1.pdf Graphic file (type pdf)
+<use agent-failure-taxonomy_files/figure-latex/model-failure-cat-1.pdf>
+Package pdftex.def Info: agent-failure-taxonomy_files/figure-latex/model-failure-cat-1.pdf  used on input line 411.
+(pdftex.def)             Requested size: 230.86192pt x 172.64456pt.
+
+Underfull \hbox (badness 6316) in paragraph at lines 424--437
 []\T1/lmr/m/n/9 (+20) Several pat-terns war-rant high-light-ing. First, over-
  []
 
-[3 <./agent-failure-taxonomy_files/figure-latex/token-box-1.pdf> <./agent-failure-taxonomy_files/figure-latex/token-breakdown-1.pdf> <./agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf>]
-Underfull \hbox (badness 2426) in paragraph at lines 552--552
+[3 <./agent-failure-taxonomy_files/figure-latex/token-box-1.pdf> <./agent-failure-taxonomy_files/figure-latex/token-breakdown-1.pdf> <./agent-failure-taxonomy_files/figure-latex/tool-failure-1.pdf>] [4 <./agent-failure-taxonomy_files/figure-latex/model-outcome-1.pdf> <./agent-failure-taxonomy_files/figure-latex/model-failure-cat-1.pdf>]
+Underfull \hbox (badness 2426) in paragraph at lines 568--568
 []|\T1/lmr/m/n/9 (+20) Z. Tang \T1/lmr/m/it/9 (+20) et al.\T1/lmr/m/n/9 (+20) , ``Small lan-guage mod-els: Sur-
  []
 
-[4] (./agent-failure-taxonomy.aux)
+[5
+
+] (./agent-failure-taxonomy.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 15885 strings out of 469515
- 253925 string characters out of 5468669
- 732083 words of memory out of 5000000
- 44073 multiletter control sequences out of 15000+600000
- 694037 words of font info for 162 fonts, out of 8000000 for 9000
+ 15907 strings out of 469515
+ 255028 string characters out of 5468669
+ 732130 words of memory out of 5000000
+ 44089 multiletter control sequences out of 15000+600000
+ 694126 words of font info for 163 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 83i,12n,93p,1211b,494s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 83i,12n,93p,1211b,535s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx6.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbx9.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmbxi10.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmmi9.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr10.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr12.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr17.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr6.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmr9.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmri9.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmsy9.pfb></Users/martincote/Library/TinyTeX/texmf-dist/fonts/type1/public/lm/lmtt9.pfb>
-Output written on agent-failure-taxonomy.pdf (4 pages, 340309 bytes).
+Output written on agent-failure-taxonomy.pdf (5 pages, 349789 bytes).
 PDF statistics:
- 274 PDF objects out of 1000 (max. 8388607)
- 223 compressed objects within 3 object streams
- 42 named destinations out of 1000 (max. 500000)
- 35012 words of extra memory for PDF output out of 35830 (max. 10000000)
+ 299 PDF objects out of 1000 (max. 8388607)
+ 243 compressed objects within 3 object streams
+ 46 named destinations out of 1000 (max. 500000)
+ 35030 words of extra memory for PDF output out of 35830 (max. 10000000)
 
