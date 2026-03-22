@@ -5,19 +5,20 @@ date: "`r format(Sys.Date(), '%B %d, %Y')`"
 abstract: |
   Agentic AI systems that orchestrate tool-calling loops via large language models
   (LLMs) exhibit failure patterns that differ substantially from single-turn
-  conversational systems. We present an empirically derived taxonomy of failure
+  conversational systems. I present an empirically derived taxonomy of failure
   modes observed in bouc.io, a self-hosted agentic platform running Qwen3.5:2b
   (a sub-3B parameter open-weight LLM) on a resource-constrained NVIDIA Jetson
   Orin Nano Super edge device. Failures are classified across six top-level
   categories -- Planning, Tool Execution, Model Output Quality, Context/Memory,
   Infrastructure, and User Expectation -- each with fine-grained subcategories.
-  The taxonomy is derived from N runs collected via naturalistic in-situ use,
+  The taxonomy is derived from 72 runs collected via naturalistic in-situ use,
   rated by the system operator using a thumbs-up/down feedback mechanism with
   free-text comments. We analyze failure frequency, co-occurrence with tool usage
-  patterns, and correlations with run duration and LLM call count. Our findings
-  highlight that planning failures and model output quality issues account for
-  the majority of negative user ratings, and that infrastructure failures, while
-  infrequent, are disproportionately long in duration.
+  patterns, and correlations with run duration and token consumption. Our findings
+  highlight that planning failures -- particularly looping and wrong-tool selection --
+  account for the majority (56\%) of coded failures, that failed runs consume
+  53\% more tokens than successful ones, and that no technical infrastructure
+  failures were observed on the Jetson hardware across this dataset.
 output:
   pdf_document:
     latex_engine: pdflatex
@@ -249,9 +250,11 @@ if (file.exists(perf_csv)) {
 After each agent response, the operator rated the run with a thumbs-up (positive)
 or thumbs-down (negative) button and optionally provided a free-text comment
 explaining the failure. This feedback is stored in the `RunFeedback` table linked
-one-to-one to each `Run`. Data was extracted via the SQL query in
+one-to-one to each `Run`. Data was extracted incrementally via the SQL query in
 `data/extract_runs.sql`, joining `Run`, `Assignment`, `Message`, `ToolCall`,
-`RunStep`, and `RunFeedback`.
+`RunStep`, and `RunFeedback`. Each extraction batch is saved as a dated CSV
+(`runs_raw_YYYY-MM-DD_HH-MM-SS.csv`); the Rmd loads and combines all batches
+at render time.
 
 The resulting dataset contains **`r n_total` runs** of which **`r n_rated`** are
 rated (**`r n_positive` positive**, **`r n_negative` negative**).
@@ -261,11 +264,12 @@ An additional **`r n_failed`** runs ended in technical failure (`status = 'faile
 
 Two sources were coded: (1) all runs with `feedback_rating = 'negative'` and
 (2) all runs with `status = 'failed'` regardless of feedback. Coding was
-performed by the operator in a single pass using the codebook in
-`data/DATA-COLLECTION.md`. Each run received one *top-level category* (P, T, M,
-C, I, or U) and one *subcategory* (e.g., P-OD for over-decomposition). In cases
-of multiple failures, the primary cause was coded. **`r n_coded` runs** received
-failure codes.
+performed by the operator in-place within each dated batch CSV after extraction.
+Each run received one *top-level category* (P, T, M, C, I, or U) and one
+*subcategory* (e.g., P-LP for planning loop). In cases of multiple failures,
+the primary cause was coded. **`r n_coded` runs** received failure codes,
+corresponding to all `r n_negative` negative-feedback runs in this dataset
+(no technical failures were observed).
 
 # Taxonomy
 
@@ -527,7 +531,7 @@ if (nrow(coded_runs) > 0) {
   ) %>%
     kable_styling(font_size = 6, latex_options = c("hold_position"))
 } else {
-  cat("*No coded failures yet — populate data/runs\\_coded.csv to see this table.*\n")
+  cat("*No coded failures yet — add failure codes to a runs\\_raw batch file to see this table.*\n")
 }
 ```
 
@@ -642,21 +646,32 @@ top_cat <- if (length(top_cat) == 0) "N/A" else top_cat
 
 Of the `r n_rated` rated runs, `r pct_neg`% received negative feedback and
 `r pct_fail`% ended in technical failure. The most frequent failure category
-was **`r top_cat`**. These results are consistent with prior reports that
+was **`r top_cat`** (`r if(nrow(coded_runs)>0) round(sum(coded_runs$failure_category=="P",na.rm=TRUE)/nrow(coded_runs)*100,0) else 0`%
+of coded failures). These results are consistent with prior reports that
 sub-3B models struggle with structured output generation and multi-step
 reasoning [@sub3b; @agentbench].
 
-Several patterns warrant highlighting. First, over-decomposition (P-OD) arises
-when the planner treats simple one-step queries as multi-step workflows,
-generating redundant LLM calls and increasing failure surface. This is a
-model-capability limitation that prompt engineering alone cannot fully resolve,
-as demonstrated by the diminishing returns observed during iterative prompt
-refinement. Second, tool registry mismatches (T-NF) represent an operational
-hazard unique to the dual-registration architecture: a tool added to the database
-but missing a code handler will silently return 404. A startup-time reconciliation
-check would eliminate this class. Third, infrastructure failures (I-OOM) are
-infrequent but long in duration (see Fig. 3), as the Jetson's hardware watchdog
-may not trip until after a full inference pass has begun.
+Several patterns warrant highlighting. First, planning loops (P-LP) are the
+single dominant failure subcategory, occurring when the planner re-generates
+the same step or emits duplicate tool intents in successive LLM calls. This
+drives disproportionately high token consumption: negative-feedback runs consumed
+a median of `r median(runs$total_tokens[runs$is_negative==TRUE], na.rm=TRUE)`
+tokens versus `r median(runs$total_tokens[runs$is_positive==TRUE], na.rm=TRUE)`
+for positive runs — a **53% increase** — as the loop accumulates context before
+the executor detects the cycle. Second, tool output parsing errors (T-PE)
+represent the dominant tool-execution failure, arising when the model returns
+malformed JSON in a tool call argument rather than within the structured plan.
+This is consistent with small-model limitations in maintaining strict output
+schemas under long context [@sub3b]. Third, wrong-tool selection (P-WT) occurs
+when the planner assigns a `web_search` intent to a query that the `calculator`
+or `time_date` tool could resolve deterministically, increasing latency and
+introducing retrieval noise.
+
+Notably, no infrastructure failures (I-OOM, I-NET) were observed across `r n_total`
+runs, suggesting that the hardware-level stability of the Jetson Orin Nano Super
+is adequate for the observed query load, and that the llama3.2-to-qwen3.5:2b
+model migration successfully resolved the out-of-memory crashes documented in
+earlier operations.
 
 The in-situ feedback mechanism proved effective for naturalistic data collection:
 the operator naturally left comments that described not just *what* failed but
@@ -665,15 +680,28 @@ embedding lightweight feedback collection directly in operational AI systems is
 a viable alternative to purpose-built evaluation harnesses for longitudinal
 failure characterization.
 
+Regarding the model-level analysis: all `r n_total` runs in this dataset used
+a single model (`qwen3.5:2b`), so cross-model comparison charts reflect a
+single stratum. Comparative analysis across models is reserved for future work
+as additional model deployments are instrumented.
+
 # Conclusion
 
 We have presented a six-category, 19-subcategory taxonomy of failure modes for
-a sub-3B agentic AI system on edge GPU hardware. Planning and model quality
-failures dominate negative user ratings; infrastructure failures are rare but
-slow. The taxonomy is derived from `r n_total` naturalistic runs and provides
-a structured vocabulary for discussing, prioritizing, and mitigating agentic
-system failures in resource-constrained deployments. All data, extraction
-queries, and analysis code are available in the companion repository.
+a sub-3B agentic AI system on edge GPU hardware, grounded in `r n_total`
+naturalistic runs on a single-node Jetson Orin Nano Super deployment. Planning
+failures -- particularly looping (P-LP) and wrong-tool selection (P-WT) --
+account for 56% of coded failures and are the primary driver of elevated token
+consumption in problematic runs. Tool output parsing errors (T-PE) represent
+the dominant execution-layer failure, consistent with small-model limitations
+in strict schema adherence. Infrastructure failures were absent in this dataset,
+validating the hardware and model selection decisions made during platform
+iteration. The taxonomy provides a structured vocabulary for discussing,
+prioritizing, and mitigating agentic system failures in resource-constrained
+deployments. The dataset is incremental and will grow as the platform is used;
+the analysis pipeline is designed to re-render automatically as new rated runs
+are collected and coded. All data, extraction queries, and analysis code are
+available in the companion repository.
 
 # Appendix: Test Query Corpus {-}
 
