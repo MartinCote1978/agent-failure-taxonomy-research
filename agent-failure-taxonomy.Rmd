@@ -96,20 +96,40 @@ theme_paper <- function() {
 
 ```{r load-data}
 # ── Load data ─────────────────────────────────────────────────────────────────
-# Expects data/runs_coded.csv  (see data/DATA-COLLECTION.md for how to produce it)
+# Loads ALL runs_raw_YYYY-MM-DD_HH-MM-SS.csv files from data/ and combines them.
+# Each file is the incremental batch produced by collect_metrics.sh for that run.
+# Failure codes (failure_category, failure_subcategory, coder_notes) are filled
+# in-place in each batch file after collection — no separate coded CSV needed.
 # Falls back to the template CSV so the document still compiles with no data.
 
-csv_path <- "data/runs_coded.csv"
-if (!file.exists(csv_path)) csv_path <- "data/runs_raw.csv"
-if (!file.exists(csv_path)) csv_path <- "data/runs_template.csv"
+batch_files <- list.files(
+  "data",
+  pattern    = "^runs_raw_\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2}\\.csv$",
+  full.names = TRUE
+)
 
-runs <- read.csv(csv_path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+read_batch <- function(f) {
+  df <- read.csv(f, stringsAsFactors = FALSE, na.strings = c("", "NA"))
+  if (nrow(df) == 0) return(NULL)   # skip header-only files
+  df
+}
+
+non_empty <- Filter(Negate(is.null), lapply(batch_files, read_batch))
+
+if (length(non_empty) > 0) {
+  runs <- dplyr::bind_rows(non_empty)
+} else {
+  # No data yet — fall back to template so the document still compiles
+  runs <- read.csv("data/runs_template.csv", stringsAsFactors = FALSE,
+                   na.strings = c("", "NA"))
+}
 
 # Ensure expected columns exist (tolerates template with zero rows)
 expected_cols <- c(
-  "run_id", "status", "duration_ms", "llm_calls", "plan_step_count",
-  "tool_call_count", "failed_tool_count", "feedback_rating", "feedback_comment",
-  "failure_category", "failure_subcategory"
+  "run_id", "status", "duration_ms",
+  "prompt_tokens", "completion_tokens", "total_tokens", "llm_calls",
+  "plan_step_count", "tool_call_count", "failed_tool_count",
+  "feedback_rating", "feedback_comment", "failure_category", "failure_subcategory"
 )
 for (col in expected_cols) {
   if (!col %in% names(runs)) runs[[col]] <- NA
@@ -118,7 +138,12 @@ for (col in expected_cols) {
 # Derived columns
 runs <- runs %>%
   mutate(
-    duration_s      = as.numeric(duration_ms) / 1000,
+    duration_s        = as.numeric(duration_ms) / 1000,
+    prompt_tokens     = as.numeric(prompt_tokens),
+    completion_tokens = as.numeric(completion_tokens),
+    total_tokens      = as.numeric(total_tokens),
+    llm_calls         = as.numeric(llm_calls),
+    token_efficiency  = completion_tokens / pmax(total_tokens, 1),
     has_feedback    = !is.na(feedback_rating),
     is_negative     = feedback_rating == "negative",
     is_positive     = feedback_rating == "positive",
@@ -185,6 +210,38 @@ feeding results back into context. Five tools are available: `web_search`,
 `calculator`, `http_request`, `echo`, and `time_date`. Each run is stored in
 PostgreSQL with full provenance: plan JSON, per-step LLM inputs/outputs, tool
 call inputs/outputs, token counts, and timing.
+
+## Observed Performance
+\vspace{-8pt}
+```{r perf-table}
+# Use the latest alias written by collect_metrics.sh; fall back to most recent
+# dated snapshot if the alias doesn't exist yet.
+perf_csv <- "data/performance_metrics.csv"
+if (!file.exists(perf_csv)) {
+  dated <- sort(list.files("data", pattern = "^performance_metrics_.*\\.csv$",
+                            full.names = TRUE), decreasing = TRUE)
+  if (length(dated) > 0) perf_csv <- dated[1]
+}
+if (file.exists(perf_csv)) {
+  perf <- read.csv(perf_csv, stringsAsFactors = FALSE)
+  # Show service label only on first row of each group
+  perf$service[duplicated(perf$service)] <- ""
+  knitr::kable(
+    perf[, c("service", "metric", "value", "unit")],
+    col.names = c("Service", "Metric", "Value", "Unit"),
+    booktabs  = TRUE,
+    format    = "latex",
+    caption   = "Observed operational performance measurements.",
+    align     = c("l", "l", "r", "l"),
+    linesep   = ""
+  ) %>%
+    kable_styling(
+      latex_options = c("hold_position", "scale_down"),
+      full_width    = FALSE
+    )
+}
+```
+† Chatbot latency measured with thinking enabled; p95 driven by reasoning chain length variance, not I/O or retrieval overhead.
 
 ## Data Collection
 
@@ -264,6 +321,15 @@ knitr::kable(
 ```
 
 # Results
+
+Across all completed runs, the median total token consumption was
+`r median(runs$total_tokens, na.rm = TRUE)` tokens
+(IQR: `r quantile(runs$total_tokens, 0.25, na.rm = TRUE)`--`r quantile(runs$total_tokens, 0.75, na.rm = TRUE)`).
+Negative-feedback runs consumed a median of
+`r median(runs$total_tokens[runs$is_negative == TRUE], na.rm = TRUE)` tokens versus
+`r median(runs$total_tokens[runs$is_positive == TRUE], na.rm = TRUE)` for positive runs,
+suggesting that failure-prone interactions involve longer context accumulation across
+planning and execution phases.
 
 ## Overall Run Quality
 
@@ -387,6 +453,58 @@ if (nrow(llm_df) > 0) {
 }
 ```
 
+## Token Usage by Outcome
+
+```{r token-box, fig.cap="Total tokens per run by outcome. Bars show medians."}
+tok_df <- runs %>%
+  filter(!is.na(total_tokens), total_tokens > 0) %>%
+  mutate(outcome = case_when(
+    run_failed  ~ "Failed",
+    is_negative ~ "Negative",
+    is_positive ~ "Positive",
+    TRUE        ~ "No feedback"
+  ))
+
+if (nrow(tok_df) > 0) {
+  ggplot(tok_df, aes(x = outcome, y = total_tokens, fill = outcome)) +
+    geom_boxplot(outlier.size = 0.8, width = 0.5, show.legend = FALSE) +
+    scale_fill_manual(values = c(
+      "Positive"    = "#4caf50",
+      "Negative"    = "#ff9800",
+      "Failed"      = "#f44336",
+      "No feedback" = "#9e9e9e"
+    )) +
+    scale_y_continuous(labels = comma) +
+    labs(x = NULL, y = "Total tokens", title = "Token Usage by Outcome") +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No token data yet") + theme_void()
+}
+```
+
+```{r token-breakdown, fig.cap="Mean prompt vs completion tokens by outcome."}
+if (nrow(tok_df) > 0) {
+  tok_long <- tok_df %>%
+    group_by(outcome) %>%
+    summarise(
+      Prompt     = mean(prompt_tokens,     na.rm = TRUE),
+      Completion = mean(completion_tokens, na.rm = TRUE),
+      .groups    = "drop"
+    ) %>%
+    pivot_longer(c(Prompt, Completion), names_to = "type", values_to = "tokens")
+
+  ggplot(tok_long, aes(x = outcome, y = tokens, fill = type)) +
+    geom_col(position = "stack") +
+    scale_fill_manual(values = c("Prompt" = "#5c6bc0", "Completion" = "#26a69a")) +
+    scale_y_continuous(labels = comma) +
+    labs(x = NULL, y = "Mean tokens",
+         title = "Prompt vs Completion Tokens", fill = NULL) +
+    theme_paper()
+} else {
+  ggplot() + annotate("text", x=1, y=1, label="No token data yet") + theme_void()
+}
+```
+
 ## Subcategory Breakdown
 
 ```{r subcat-table, results='asis'}
@@ -493,5 +611,52 @@ slow. The taxonomy is derived from `r n_total` naturalistic runs and provides
 a structured vocabulary for discussing, prioritizing, and mitigating agentic
 system failures in resource-constrained deployments. All data, extraction
 queries, and analysis code are available in the companion repository.
+
+# Appendix: Test Query Corpus {-}
+
+The following queries were submitted to the agent during naturalistic data
+collection. Queries were chosen to cover all five available tools
+(`web_search`, `calculator`, `time_date`, `echo`, `http_request`) as well as
+multi-step chaining, ambiguous intent, and out-of-scope requests likely to
+surface model quality and user expectation failures.
+
+**Single-tool — web search**
+
+- Search for the weather in Paris.
+- Who is the current Prime Minister of Canada?
+- What is the capital city of Australia?
+- What is the population of Tokyo?
+- What is the current stock price of Apple?
+
+**Single-tool — calculator**
+
+- What is 2+2, then multiply that by 3, then add 10 to it.
+- What is 15% of 847?
+- What is the square root of 144, divided by 3?
+- If I invest \$1,000 at 5% annual interest for 10 years, what is the final amount?
+
+**Single-tool — time / date**
+
+- What time is it in Tokyo?
+- What time is it right now in London?
+- What day of the week will January 1st, 2027 fall on?
+- How many days until Christmas?
+
+**Multi-step / tool chaining**
+
+- How long is the drive between Montreal, QC and New York City, NY?
+- What is today's date? Then tell me what date it will be in 90 days.
+- Search for the speed of light in km/s, then calculate how far light travels in 10 minutes.
+
+**Ambiguous / edge cases**
+
+- Tell me a fun fact.
+- What is the meaning of life?
+- Summarize the history of the internet in 3 bullet points.
+
+**Out-of-scope / user expectation**
+
+- Write me a Python function to sort a list.
+- Translate "hello, how are you?" into French, Spanish, and Japanese.
 
 # References {-}

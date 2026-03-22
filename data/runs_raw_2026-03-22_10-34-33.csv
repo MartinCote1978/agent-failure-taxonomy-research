@@ -1,0 +1,2 @@
+run_id,assignment_id,assignment_title,created_at,status,error,duration_ms,prompt_tokens,completion_tokens,total_tokens,llm_calls,plan_goal,plan_step_count,user_message,tool_call_count,tools_used,failed_tool_count,step_count,feedback_rating,feedback_comment,failure_category,failure_subcategory,coder_notes
+fed3b2a2-434d-41ec-81be-17dc84ac59cb,f2a0651c-356a-440f-90ce-d4a1f6a09201,Search for the weather in Paris,33:31.8,completed,,32902,8153,251,8404,3,Create an execution plan for the conversation,1,Search for the weather in Paris,1,http_request,0,4,positive,,,,
