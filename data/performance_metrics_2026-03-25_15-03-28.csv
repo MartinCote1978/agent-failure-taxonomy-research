@@ -1,0 +1,7 @@
+service,metric,value,unit,source
+Agent,Avg. planner latency (Qwen3.5:2b),11258 / 12101,ms,pod logs — agent-api-chart
+Agent,Avg. tool-call round-trip,1643,ms,DB ToolCall.duration_ms
+Agent,Memory retrieval p50 / p95,1311 / 12382,ms,pod logs — memory-api-chart
+Agent,Distillation pipeline p50 / p95,13.5 / 130.6,s,pod logs — memory-distiller-chart
+Chatbot,Avg. response latency (w/ thinking),7171 / 244960,ms,pod logs — chatbot-api-chart
+Chatbot,Avg. tokens per response,1421,tokens,DB Message.(prompt+completion)_tokens

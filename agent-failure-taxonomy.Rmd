@@ -9,13 +9,13 @@ abstract: |
   modes observed in bouc.io, a self-hosted agentic platform running Qwen3.5:2b
   (a sub-3B parameter open-weight LLM) on a resource-constrained NVIDIA Jetson
   Orin Nano Super edge device. Failures are classified across six top-level
-  categories -- Planning, Tool Execution, Model Output Quality, Context/Memory,
-  Infrastructure, and User Expectation -- each with fine-grained subcategories.
-  The taxonomy is derived from 72 runs collected via naturalistic in-situ use,
+  categories, Planning, Tool Execution, Model Output Quality, Context/Memory,
+  Infrastructure, and User Expectation, each with fine-grained subcategories.
+  The taxonomy is derived from 178 runs collected via naturalistic in-situ use,
   rated by the system operator using a thumbs-up/down feedback mechanism with
-  free-text comments. We analyze failure frequency, co-occurrence with tool usage
-  patterns, and correlations with run duration and token consumption. Our findings
-  highlight that planning failures -- particularly looping and wrong-tool selection --
+  free-text comments. I analyze failure frequency, co-occurrence with tool usage
+  patterns, and correlations with run duration and token consumption. The findings
+  highlight that planning failures, particularly looping and wrong-tool selection,
   account for the majority (56\%) of coded failures, that failed runs consume
   53\% more tokens than successful ones, and that no technical infrastructure
   failures were observed on the Jetson hardware across this dataset.
@@ -274,13 +274,13 @@ corresponding to all `r n_negative` negative-feedback runs in this dataset
 # Taxonomy
 
 Table 1 presents the full taxonomy. Six top-level categories were identified,
-with 19 subcategories total.
+with 20 subcategories total.
 
 ```{r taxonomy-table, results='asis'}
 taxonomy <- data.frame(
   Code = c(
     "P", "P-NJ", "P-OD", "P-WT", "P-LP",
-    "T", "T-NF", "T-TO", "T-PE", "T-EX",
+    "T", "T-NF", "T-TO", "T-PE", "T-EX", "T-NE",
     "M", "M-HL", "M-RP", "M-INC", "M-RF",
     "C", "C-MM", "C-OV",
     "I", "I-OOM", "I-NET", "I-DB",
@@ -292,7 +292,7 @@ taxonomy <- data.frame(
     "Planning loop / duplicate plan",
     "Tool execution failures", "Tool not found (registry mismatch)",
     "Tool execution timeout", "Tool output parsing error",
-    "Tool raised exception",
+    "Tool raised exception", "Tool not executed (execution system skipped step)",
     "Model output quality", "Hallucinated fact or tool name",
     "Repetitive / looping response", "Incomplete response (cut off)",
     "Model refusal",
@@ -317,12 +317,12 @@ knitr::kable(
   taxonomy,
   format  = "latex",
   booktabs = TRUE,
-  caption = "Failure taxonomy (6 top-level categories, 19 subcategories).",
+  caption = "Failure taxonomy (6 top-level categories, 20 subcategories).",
   col.names = c("Code", "Description"),
   linesep = ""
 ) %>%
   kable_styling(font_size = 6, latex_options = c("hold_position", "scale_down")) %>%
-  row_spec(c(1, 6, 11, 16, 19, 23), bold = TRUE)
+  row_spec(c(1, 6, 12, 17, 20, 24), bold = TRUE)
 ```
 
 # Results
@@ -337,6 +337,8 @@ suggesting that failure-prone interactions involve longer context accumulation a
 planning and execution phases.
 
 ## Overall Run Quality
+
+Figure 1 shows the distribution of run outcomes across the full dataset of `r n_total` runs. Runs are classified as *positive feedback*, *negative feedback*, *failed* (status = 'failed'), or *no feedback* (unrated).
 
 ```{r quality-bar, fig.cap="Run outcome distribution."}
 if (n_total > 0) {
@@ -374,6 +376,8 @@ if (n_total > 0) {
 
 ## Failure Category Frequency
 
+Figure 2 shows the share of coded failures attributed to each of the six top-level taxonomy categories. Only the `r n_coded` runs that received a failure code contribute to this chart.
+
 ```{r category-freq, fig.cap="Frequency of failure categories among coded runs."}
 coded_runs <- runs %>% filter(!is.na(failure_category))
 
@@ -400,6 +404,8 @@ if (nrow(coded_runs) > 0) {
 ```
 
 ## Run Duration by Outcome
+
+Figure 3 compares run duration in seconds across outcome categories. Longer durations in negative or failed runs reflect additional planning and execution cycles before the agent terminates or the user abandons the interaction.
 
 ```{r duration-box, fig.cap="Run duration (s) by outcome category. Horizontal bars show medians."}
 dur_df <- runs %>%
@@ -430,6 +436,8 @@ if (nrow(dur_df) > 0) {
 
 ## LLM Call Count Distribution
 
+Figure 4 shows the distribution of LLM calls per run, stacked by outcome. A high LLM call count for negative runs is a proxy signal for planning loops (P-LP), where the planner repeatedly regenerates steps before the executor detects the cycle.
+
 ```{r llm-calls-hist, fig.cap="Distribution of LLM calls per run by outcome."}
 llm_df <- runs %>%
   filter(!is.na(llm_calls)) %>%
@@ -459,6 +467,8 @@ if (nrow(llm_df) > 0) {
 ```
 
 ## Token Usage by Outcome
+
+Figures 5 and 6 quantify token consumption by outcome. Negative-feedback and failed runs are expected to consume more tokens due to additional context accumulation across repeated planning and execution cycles.
 
 ```{r token-box, fig.cap="Total tokens per run by outcome. Bars show medians."}
 tok_df <- runs %>%
@@ -512,6 +522,8 @@ if (nrow(tok_df) > 0) {
 
 ## Subcategory Breakdown
 
+Table 2 presents failure counts at the subcategory level. This view identifies which specific failure modes within each top-level category are most prevalent, enabling targeted mitigation prioritization.
+
 ```{r subcat-table, results='asis'}
 if (nrow(coded_runs) > 0) {
   subcat_tbl <- coded_runs %>%
@@ -536,6 +548,8 @@ if (nrow(coded_runs) > 0) {
 ```
 
 ## Tool Usage and Failure Co-occurrence
+
+Figure 7 contrasts tool invocation frequency between runs with positive outcomes ("OK") and runs with negative feedback or failures ("Problematic"). Tools that appear disproportionately in problematic runs may indicate model difficulty with specific tool schemas or output formats.
 
 ```{r tool-failure, fig.cap="Tool invocation frequency for positive vs negative runs."}
 tool_df <- runs %>%
@@ -567,6 +581,8 @@ if (nrow(tool_df) > 0) {
 ```
 
 ## Failures by Model
+
+Figures 8 and 9 present outcome and failure-category distributions broken down by model. All runs in the current dataset used `qwen3.5:2b`; cross-model comparison will populate automatically as additional model deployments are instrumented.
 
 ```{r model-outcome, fig.cap="Run outcome distribution by model."}
 model_df <- runs %>%

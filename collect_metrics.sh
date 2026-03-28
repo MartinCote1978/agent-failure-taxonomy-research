@@ -347,8 +347,19 @@ NEW_ROWS=$(awk 'NR>1 { count++ } END { print count+0 }' "$RUNS_DATED")
 # ── Update .lastrun ──────────────────────────────────────────────────────────
 if [[ "$NEW_ROWS" -gt 0 ]]; then
   info "✅  ${NEW_ROWS} new rows extracted → runs_raw_${DATETIME}.csv"
-  # SQL orders DESC so row 2 (first data row) is the newest
-  NEW_MAX_TS=$(awk -F',' 'NR==2 { gsub(/"/, "", $4); print $4; exit }' "$RUNS_DATED")
+  # SQL orders DESC so first data row is the newest — use Python for proper CSV parsing
+  NEW_MAX_TS=$(python3 - "$RUNS_DATED" <<'PYEOF'
+import csv, sys
+with open(sys.argv[1]) as f:
+    rows = list(csv.DictReader(f))
+# rows are DESC; pick first non-empty created_at
+for row in rows:
+    ts = row.get('created_at', '').strip()
+    if ts:
+        print(ts)
+        break
+PYEOF
+)
   if [[ -n "$NEW_MAX_TS" ]]; then
     echo "$NEW_MAX_TS" > "$LASTRUN_FILE"
     info "Last run timestamp saved: ${NEW_MAX_TS}"
