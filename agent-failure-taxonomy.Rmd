@@ -11,13 +11,14 @@ abstract: |
   Orin Nano Super edge device. Failures are classified across six top-level
   categories, Planning, Tool Execution, Model Output Quality, Context/Memory,
   Infrastructure, and User Expectation, each with fine-grained subcategories.
-  The taxonomy is derived from 178 runs collected via naturalistic in-situ use,
+  The taxonomy is derived from 200 runs collected via semi-naturalistic opportunistic
+  sampling combining purposive test queries and organic platform use sessions,
   rated by the system operator using a thumbs-up/down feedback mechanism with
   free-text comments. I analyze failure frequency, co-occurrence with tool usage
   patterns, and correlations with run duration and token consumption. The findings
   highlight that planning failures, particularly looping and wrong-tool selection,
-  account for the majority (56\%) of coded failures, that failed runs consume
-  53\% more tokens than successful ones, and that no technical infrastructure
+  account for the majority (47\%) of coded failures, that negative-feedback runs consume
+  45.8\% more tokens than successful ones, and that no technical infrastructure
   failures were observed on the Jetson hardware across this dataset.
 output:
   pdf_document:
@@ -177,16 +178,17 @@ Large language model (LLM) agents that plan and invoke external tools introduce
 failure modes that go well beyond the semantic errors of single-turn chat systems.
 Prior work has catalogued failures in cloud-hosted frontier models [@react; @toolformer],
 but the behavior of *sub-3B* parameter open-weight models in agentic settings on
-resource-constrained hardware is poorly understood. Small models have been shown
+resource-constrained hardware is poorly understood as far as I can tell. Small models have been shown
 to achieve only 20–40% accuracy on complex agentic tasks [@sub3b], yet the
-specific failure patterns—and their operational triggers—have not been
+specific failure patterns, and their operational triggers, have not been
 systematically characterized in a production deployment.
 
-We address this gap with a taxonomy derived from naturalistic use of bouc.io
-[@boucio], a self-hosted agentic platform running Qwen3.5:2b [@qwen2] on an
-NVIDIA Jetson Orin Nano Super [@jetson]. Rather than constructing an artificial
-benchmark, we exploit in-situ user feedback (thumbs-up/down with free-text
-comment) collected over `r n_total` runs spanning `r n_rated` rated interactions.
+I address this gap with a taxonomy derived from semi-naturalistic opportunistic
+sampling of bouc.io [@boucio], a self-hosted agentic platform running Qwen3.5:2b
+[@qwen2] on an NVIDIA Jetson Orin Nano Super [@jetson]. Rather than constructing
+an artificial benchmark, I exploit in-situ user feedback (thumbs-up/down with
+free-text comment) collected over `r n_total` runs spanning `r n_rated` rated
+interactions.
 
 # Related Work
 
@@ -196,10 +198,17 @@ learn to call APIs self-supervised, but analysis focused on correctness rather
 than failure characterization. AgentBench [@agentbench] benchmarks agent
 performance across tasks, noting that smaller models suffer disproportionate
 planning failures. HuggingGPT [@hugginggpt] and similar orchestration frameworks
-identify tool-selection errors as a dominant failure class. Our work differs in
-three ways: (1) it uses a sub-3B model, (2) it is grounded in a production
-deployment on edge GPU hardware, and (3) failure labels come from the operator
-rather than an automated evaluator.
+identify tool-selection errors as a dominant failure class. ToolLLM [@toolllm]
+benchmarks tool-calling across 16,000+ real-world APIs, finding that even large
+models struggle with multi-hop chains — a pattern my data confirms at sub-3B
+scale. Sumers et al. [@cogarch] provide a comprehensive taxonomy of cognitive
+architectures for language agents, within which the planner-executor pattern of
+bouc.io corresponds to a plan-then-act decomposition. MemGPT [@memgpt] addresses
+context limitations via hierarchical memory management; the failure modes it
+targets (C-MM, C-OV) remain latent in our deployment due to current memory system
+constraints (see Discussion). My work differs in three ways: (1) it uses a sub-3B
+model, (2) it is grounded in a production-like deployment on edge GPU hardware, and
+(3) failure labels come from the operator rather than an automated evaluator.
 
 # Methodology
 
@@ -208,8 +217,8 @@ rather than an automated evaluator.
 bouc.io implements a two-phase planner-executor agent [@boucio]. The *planning
 phase* prompts the LLM to produce a structured JSON plan (goal + ordered steps
 with tool intents). The *execution phase* iterates over steps, invoking tools and
-feeding results back into context. Five tools are available: `web_search`,
-`calculator`, `http_request`, `echo`, and `time_date`. Each run is stored in
+feeding results back into context. Fourteen tools are available: `web_search`,
+`calculator`, `http_request`, `echo`, `fetch_page`, `json_query`, `text_extract`, `memory_search`, `bash`, `read_file`, `write_file`, `glob_files`, `list_dir`, and `time_date`. Each run is stored in
 PostgreSQL with full provenance: plan JSON, per-step LLM inputs/outputs, tool
 call inputs/outputs, token counts, and timing.
 
@@ -254,7 +263,8 @@ one-to-one to each `Run`. Data was extracted incrementally via the SQL query in
 `data/extract_runs.sql`, joining `Run`, `Assignment`, `Message`, `ToolCall`,
 `RunStep`, and `RunFeedback`. Each extraction batch is saved as a dated CSV
 (`runs_raw_YYYY-MM-DD_HH-MM-SS.csv`); the Rmd loads and combines all batches
-at render time.
+at render time. Queries were a mix of deliberate tool-exercising prompts (see
+Appendix) and sessions arising from routine platform use.
 
 The resulting dataset contains **`r n_total` runs** of which **`r n_rated`** are
 rated (**`r n_positive` positive**, **`r n_negative` negative**).
@@ -658,6 +668,21 @@ top_cat <- coded_runs %>%
   pull(failure_cat_lbl)
 
 top_cat <- if (length(top_cat) == 0) "N/A" else top_cat
+
+# Mann-Whitney U test: token consumption, negative vs positive runs
+rated_runs <- runs %>%
+  filter(feedback_rating %in% c("positive", "negative"), total_tokens > 0)
+if (nrow(rated_runs) > 2) {
+  wt     <- wilcox.test(total_tokens ~ feedback_rating, data = rated_runs)
+  wt_W   <- round(wt$statistic)
+  wt_p   <- format.pval(wt$p.value, digits = 2, eps = 0.001)
+} else {
+  wt_W <- NA; wt_p <- "N/A"
+}
+neg_med_tok <- median(runs$total_tokens[runs$is_negative == TRUE], na.rm = TRUE)
+pos_med_tok <- median(runs$total_tokens[runs$is_positive == TRUE], na.rm = TRUE)
+pct_tok_increase <- if (!is.na(neg_med_tok) && !is.na(pos_med_tok) && pos_med_tok > 0)
+  round((neg_med_tok - pos_med_tok) / pos_med_tok * 100) else NA
 ```
 
 Of the `r n_rated` rated runs, `r pct_neg`% received negative feedback and
@@ -671,15 +696,16 @@ Several patterns warrant highlighting. First, planning loops (P-LP) are the
 single dominant failure subcategory, occurring when the planner re-generates
 the same step or emits duplicate tool intents in successive LLM calls. This
 drives disproportionately high token consumption: negative-feedback runs consumed
-a median of `r median(runs$total_tokens[runs$is_negative==TRUE], na.rm=TRUE)`
-tokens versus `r median(runs$total_tokens[runs$is_positive==TRUE], na.rm=TRUE)`
-for positive runs — a **53% increase** — as the loop accumulates context before
-the executor detects the cycle. Second, tool output parsing errors (T-PE)
+a median of `r neg_med_tok` tokens versus `r pos_med_tok` for positive runs —
+a **`r pct_tok_increase`% increase** (Mann-Whitney U, W\,=\,`r wt_W`,
+p\,`r wt_p`) — as the loop accumulates context before the executor detects the
+cycle. Task complexity is a likely confound: more demanding queries may drive
+both higher token use and greater failure likelihood. Second, tool output parsing errors (T-PE)
 represent the dominant tool-execution failure, arising when the model returns
 malformed JSON in a tool call argument rather than within the structured plan.
 This is consistent with small-model limitations in maintaining strict output
 schemas under long context [@sub3b]. Third, wrong-tool selection (P-WT) occurs
-when the planner assigns a `web_search` intent to a query that the `calculator`
+when the planner assigns a `web_search` intent to a query that the `calculator`, `http_request`, `web_search`
 or `time_date` tool could resolve deterministically, increasing latency and
 introducing retrieval noise.
 
@@ -687,10 +713,20 @@ Notably, no infrastructure failures (I-OOM, I-NET) were observed across `r n_tot
 runs, suggesting that the hardware-level stability of the Jetson Orin Nano Super
 is adequate for the observed query load, and that the llama3.2-to-qwen3.5:2b
 model migration successfully resolved the out-of-memory crashes documented in
-earlier operations.
+earlier operations.  It is important to note, the tests were done under a single user workload, allowing plenty of capacity to process each request in sequence.
 
-The in-situ feedback mechanism proved effective for naturalistic data collection:
-the operator naturally left comments that described not just *what* failed but
+The absence of Context/Memory (C) failures warrants explanation. The platform's
+memory distiller uses the same Qwen3.5:2b model to evaluate and extract memories,
+applying a confidence threshold of 0.5. In practice this produces few high-quality
+extractions per run, resulting in sparse memory injection across sessions. With
+minimal memories in context, retrieval failures (C-MM) and context overflow (C-OV)
+are rarely triggered under current operating conditions. This is a system maturity
+limitation rather than evidence that C-category failures are absent in principle, as a more capable memory pipeline would be expected to surface this category
+[@memgpt].
+
+The in-situ feedback mechanism proved effective for semi-naturalistic data
+collection:
+the operator naturally left short comments that described not just *what* failed but
 *why*, providing richer signal than a binary label alone. This suggests that
 embedding lightweight feedback collection directly in operational AI systems is
 a viable alternative to purpose-built evaluation harnesses for longitudinal
@@ -701,13 +737,26 @@ a single model (`qwen3.5:2b`), so cross-model comparison charts reflect a
 single stratum. Comparative analysis across models is reserved for future work
 as additional model deployments are instrumented.
 
+## Limitations
+
+This study has several limitations. First, all failure codes were assigned by a
+single coder (the system operator, i.e. myself), introducing potential for confirmation bias.
+No inter-rater reliability measure (e.g., Cohen's kappa) was computed; internal
+consistency was partially mitigated by applying the codebook in a single
+continuous session with explicit decision rules for ambiguous cases. Second, the
+dataset covers a single model (Qwen3.5:2b) on a single deployment; findings may
+not generalise to other sub-3B models or hardware configurations. Third, data
+collection blends purposive test queries with organic use sessions, limiting
+claims about the representativeness of failure rates relative to unconstrained
+deployment.
+
 # Conclusion
 
-We have presented a six-category, 19-subcategory taxonomy of failure modes for
+I have presented a six-category, 20-subcategory taxonomy of failure modes for
 a sub-3B agentic AI system on edge GPU hardware, grounded in `r n_total`
-naturalistic runs on a single-node Jetson Orin Nano Super deployment. Planning
-failures -- particularly looping (P-LP) and wrong-tool selection (P-WT) --
-account for 56% of coded failures and are the primary driver of elevated token
+semi-naturalistic runs on a single-node Jetson Orin Nano Super deployment. Planning
+failures, particularly looping (P-LP) and wrong-tool selection (P-WT),
+account for 47% of coded failures and are the primary driver of elevated token
 consumption in problematic runs. Tool output parsing errors (T-PE) represent
 the dominant execution-layer failure, consistent with small-model limitations
 in strict schema adherence. Infrastructure failures were absent in this dataset,
@@ -721,8 +770,8 @@ available in the companion repository.
 
 # Appendix: Test Query Corpus {-}
 
-The following queries were submitted to the agent during naturalistic data
-collection. Queries were chosen to cover all five available tools
+The following queries were submitted to the agent during data collection. Queries
+were chosen to cover the main tools available
 (`web_search`, `calculator`, `time_date`, `echo`, `http_request`) as well as
 multi-step chaining, ambiguous intent, and out-of-scope requests likely to
 surface model quality and user expectation failures.
@@ -765,5 +814,27 @@ surface model quality and user expectation failures.
 
 - Write me a Python function to sort a list.
 - Translate "hello, how are you?" into French, Spanish, and Japanese.
+
+---
+
+\small
+*Platform source code and infrastructure modules for bouc.io are maintained in a series of private
+GitLab repositories. Blog posts documenting each major system milestone and specific technical components are
+published at \url{https://www.martincote.ca/blogs.html}.*
+
+---
+
+\small
+*\textbf{Data \& Code Availability.} The R Markdown source, performance metrics CSV, and
+collection scripts for this paper are openly available at
+\url{https://github.com/MartinCote1978/agent-failure-taxonomy-research}*
+
+---
+
+\small
+*\textbf{AI Usage Disclosure.} This document was created with assistance from AI tools. The content has been reviewed and edited by a human. For more information on the extent and nature of AI usage, please contact the author.*
+
+---
+
 
 # References {-}
